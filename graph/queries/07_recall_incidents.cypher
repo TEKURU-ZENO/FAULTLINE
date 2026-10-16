@@ -14,5 +14,5 @@ RETURN past.id AS incident_id,
        coalesce(res.fail_count, 0) AS failures,
        score,
        overlap
-ORDER BY overlap DESC, score DESC
+ORDER BY overlap DESC, score ASC
 LIMIT 3;
