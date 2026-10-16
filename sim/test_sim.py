@@ -103,5 +103,49 @@ def test_simulation_fault_8_caller_anomaly_trap():
     assert success, "Circuit breaker action failed to resolve Fault 8"
     sim.heal()
 
+@pytest.mark.skipif(FalkorDB is None, reason="falkordb not installed")
+def test_simulation_fault_2_db_pool():
+    """Tests Fault 2: Database Connection Pool Exhaustion on orders-pg."""
+    sim = SimulatorEngine(graph_name="tenant:demo")
+    sim.heal()
+
+    # 1. Inject Fault 2
+    sim.inject_fault(2)
+
+    # 2. Assert Alerts and Anomaly on orders-pg
+    res_alerts = sim.g.query("MATCH (a:Alert)-[:FIRED_ON]->(target) RETURN target.name")
+    alert_targets = [r[0] for r in res_alerts.result_set]
+    assert "orders-pg" in alert_targets, "Expected Alert fired on orders-pg"
+    assert "checkoutservice" in alert_targets, "Expected Alert fired on checkoutservice"
+    assert "accountingservice" in alert_targets, "Expected Alert fired on accountingservice"
+
+    res_anoms = sim.g.query("MATCH (an:Anomaly)-[:OBSERVED_ON]->(target) RETURN target.name")
+    anom_targets = [r[0] for r in res_anoms.result_set]
+    assert "orders-pg" in anom_targets, "Expected Anomaly observed on orders-pg"
+
+    # 3. Assert Query 1 (Downstream) identifies orders-pg as top candidate
+    q_root = load_query("01_find_root_candidates_downstream.cypher")
+    res_root = sim.g.query(q_root, {"since": sim.current_time - 1800})
+    assert res_root.result_set, "Query 1 returned no root candidates for Fault 2"
+    top_candidate = res_root.result_set[0][0]
+    assert top_candidate == "orders-pg", f"Expected top candidate 'orders-pg', got '{top_candidate}'"
+
+    # 4. Assert who_to_page routes to Data Platform team (Priya Sharma @priya), NOT Asha Patel
+    q_page = load_query("08_who_to_page.cypher")
+    res_page = sim.g.query(q_page, {"root": "orders-pg", "now": sim.current_time})
+    assert res_page.result_set, "Query 8 returned no on-call engineer for orders-pg"
+    paged_name = res_page.result_set[0][0]
+    paged_handle = res_page.result_set[0][1]
+    is_on_call = res_page.result_set[0][2]
+    
+    assert paged_handle == "@priya", f"Expected to page Priya Sharma (@priya) for database outage, got {paged_handle}"
+    assert paged_handle != "@asha", "Paging incorrectly routed to payments engineer (@asha) instead of database team"
+    assert is_on_call is True, "Expected paged engineer to be currently on-call"
+
+    # 5. Remediate via scale_db_pool
+    success = sim.execute_action("scale_db_pool", {"target": "orders-pg", "max_conns": 500})
+    assert success, "scale_db_pool action failed to resolve Fault 2"
+    sim.heal()
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
