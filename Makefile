@@ -1,4 +1,4 @@
-.PHONY: up down status seed test-queries test-sim test-race check-vector api web test-agents
+.PHONY: up down status seed test-queries test-sim test-race check-vector api web test-agents bench
 
 up:
 	python tasks.py up
@@ -32,3 +32,6 @@ web:
 
 test-agents:
 	python tasks.py test-agents
+
+bench:
+	python tasks.py bench

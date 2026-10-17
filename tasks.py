@@ -70,6 +70,10 @@ def test_agents():
     """Run multi-agent incident commander cold vs warm fast-path test."""
     return run_cmd([sys.executable, "agents/test_agents.py"])
 
+def bench():
+    """Run full benchmark evaluation across Baseline, Cold, and Warm conditions."""
+    return run_cmd([sys.executable, "bench/run.py"])
+
 TASKS = {
     "up": up,
     "down": down,
@@ -82,6 +86,7 @@ TASKS = {
     "api": api,
     "web": web,
     "test-agents": test_agents,
+    "bench": bench,
 }
 
 def main():
