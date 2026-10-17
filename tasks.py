@@ -54,6 +54,10 @@ def check_vector():
     """Check vector distance vs similarity direction in FalkorDB."""
     return run_cmd([sys.executable, "graph/check_vector_metric.py"])
 
+def test_agents():
+    """Run multi-agent incident commander cold vs warm fast-path test."""
+    return run_cmd([sys.executable, "agents/test_agents.py"])
+
 TASKS = {
     "up": up,
     "down": down,
@@ -63,6 +67,7 @@ TASKS = {
     "test-sim": test_sim,
     "test-race": test_race,
     "check-vector": check_vector,
+    "test-agents": test_agents,
 }
 
 def main():
