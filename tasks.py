@@ -54,6 +54,18 @@ def check_vector():
     """Check vector distance vs similarity direction in FalkorDB."""
     return run_cmd([sys.executable, "graph/check_vector_metric.py"])
 
+def api():
+    """Start FastAPI streaming backend."""
+    return run_cmd([sys.executable, "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"])
+
+def web():
+    """Start Next.js frontend dashboard on port 3001."""
+    npm_cmd = "npm.cmd" if sys.platform == "win32" else "npm"
+    web_dir = ROOT / "web"
+    print(f"\n[RUN] {npm_cmd} run dev (in {web_dir})")
+    res = subprocess.run([npm_cmd, "run", "dev"], cwd=str(web_dir))
+    return res.returncode
+
 def test_agents():
     """Run multi-agent incident commander cold vs warm fast-path test."""
     return run_cmd([sys.executable, "agents/test_agents.py"])
@@ -67,6 +79,8 @@ TASKS = {
     "test-sim": test_sim,
     "test-race": test_race,
     "check-vector": check_vector,
+    "api": api,
+    "web": web,
     "test-agents": test_agents,
 }
 
