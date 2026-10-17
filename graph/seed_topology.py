@@ -461,7 +461,7 @@ def seed_historical_memory(g):
         CREATE (fp)-[:RESOLVED_BY {success_count: $successes, fail_count: $failures}]->(rb)
         WITH i
         UNWIND $affected AS aff_name
-        MATCH (aff:Service {name: aff_name})
+        MATCH (aff {name: aff_name})
         CREATE (i)-[:AFFECTED]->(aff)
         """
         g.query(cypher, {

@@ -318,11 +318,14 @@ def remediator_node(state: IncidentState, simulator=None) -> Dict[str, Any]:
         actions_list = json.loads(raw_actions) if isinstance(raw_actions, str) else raw_actions
         first_action = actions_list[0]
         action_name = first_action.get("action", "rollback")
-        params = {k: v for k, v in first_action.items() if k != "action"}
-        rationale = f"Prescribed by proven runbook '{matching_rb['runbook_title']}'"
+        if "parameters" in first_action and isinstance(first_action["parameters"], dict):
+            params = first_action["parameters"]
+        else:
+            params = {k: v for k, v in first_action.items() if k not in ["action", "target_node", "rationale", "is_from_runbook"]}
+        rationale = f"Prescribed by proven runbook '{matching_rb.get('runbook_title', 'Proven Runbook')}'"
         is_rb = True
     else:
-        # Synthesize based on root cause type
+        # Synthesize based on root cause type across all 12 fault types
         if root == "orders-pg":
             action_name = "scale_db_pool"
             params = {"target": "orders-pg", "max_conns": 500}
@@ -331,6 +334,34 @@ def remediator_node(state: IncidentState, simulator=None) -> Dict[str, Any]:
             action_name = "circuit_breaker"
             params = {"service": "cartservice", "enabled": True}
             rationale = "Uncapped retry storm detected — enabling circuit breaker"
+        elif root == "valkey-cart":
+            action_name = "warm_cache"
+            params = {"target": "valkey-cart"}
+            rationale = "Cache stampede detected on valkey-cart — warming cache"
+        elif root == "kafka":
+            action_name = "scale_consumers"
+            params = {"target": "accountingservice", "replicas": 4}
+            rationale = "Consumer lag on orders topic — scaling accounting consumer replicas"
+        elif root == "flagd":
+            action_name = "toggle_flag"
+            params = {"flag": "quote_v2", "enabled": False}
+            rationale = "Feature flag drift on flagd — disabling quote_v2"
+        elif root in ["k8s-node-2", "k8s-node-1"]:
+            action_name = "reschedule_pod"
+            params = {"target": "pod-checkout-2", "to_node": "k8s-node-3"}
+            rationale = f"Compute node saturation on {root} — rescheduling pod"
+        elif root == "payment-gw-ext":
+            action_name = "rotate_cert"
+            params = {"target": "payment-gw-ext"}
+            rationale = "SSL handshake failure — rotating gateway certificate"
+        elif root == "shippingservice":
+            action_name = "adjust_timeout"
+            params = {"service": "shippingservice", "timeout_ms": 1000}
+            rationale = "Downstream query latency — tuning request timeout"
+        elif root == "checkoutservice":
+            action_name = "restart_service"
+            params = {"service": "checkoutservice"}
+            rationale = "Memory leak on checkoutservice — recycling service pods"
         else:
             action_name = "rollback"
             params = {"service": root, "version": "v2.4.0"}
@@ -437,12 +468,12 @@ def scribe_node(state: IncidentState) -> Dict[str, Any]:
         "emb": emb,
         "pat_name": pat_name,
         "pat_sig": pat_sig,
-        "actions": json.dumps([state["proposed_action"]])
+        "actions": json.dumps([{"action": state["proposed_action"]["action"], **state["proposed_action"].get("parameters", {})}])
     })
 
-    # Link AFFECTED services
+    # Link AFFECTED entities
     for aff in state.get("alerting_services", []):
-        g.query("MATCH (i:Incident {id: $id}), (s:Service {name: $s}) CREATE (i)-[:AFFECTED]->(s)", {"id": inc_id, "s": aff})
+        g.query("MATCH (i:Incident {id: $id}), (s {name: $s}) CREATE (i)-[:AFFECTED]->(s)", {"id": inc_id, "s": aff})
 
     postmortem = {
         "incident_id": inc_id,

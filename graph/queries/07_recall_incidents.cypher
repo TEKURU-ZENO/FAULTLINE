@@ -1,6 +1,6 @@
 CALL db.idx.vector.queryNodes('Incident', 'embedding', 10, vecf32($embedding))
 YIELD node AS past, score
-OPTIONAL MATCH (past)-[:AFFECTED]->(s:Service)
+OPTIONAL MATCH (past)-[:AFFECTED]->(s)
 WHERE s.name IN $alerting_names
 WITH past, score, count(s) AS overlap
 OPTIONAL MATCH (past)-[:MATCHES]->(fp:FailurePattern)

@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 import pytest
 from sim.engine import SimulatorEngine
 from agents.graph import build_incident_commander_graph
+from graph.seed_topology import seed_graph
 
 def test_multi_agent_cold_vs_warm_fast_path():
     print(f"\n=======================================================")
@@ -23,6 +24,8 @@ def test_multi_agent_cold_vs_warm_fast_path():
     print(f"=======================================================")
 
     tenant = "tenant:demo"
+    # Ensure graph is in baseline state (historical incidents exclude Fault 1)
+    seed_graph(graph_name=tenant, include_memory=True)
     sim = SimulatorEngine(graph_name=tenant)
     app = build_incident_commander_graph(simulator=sim)
 
