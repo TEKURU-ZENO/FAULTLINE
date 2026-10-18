@@ -15,14 +15,14 @@
 
 It’s 2:14 AM. Checkout is failing and six alerts are firing. Which one actually matters?
 
-Traditional incident tools dump flat logs and vectors into an LLM. But **"what depends on what" is a graph traversal, not a semantic search**. When `checkoutservice` fails because a bad deploy on `paymentservice` exhausted the connection pool on `orders-pg`, flat log search blames checkout (the loudest victim) while ignoring the root cause three hops away.
+Traditional incident workflows dump flat logs into an alert triage queue. But **"what depends on what" is a graph traversal, not a text search**. When `checkoutservice` fails because a bad deploy on `paymentservice` exhausted the connection pool on `orders-pg`, a naive loudest-alert check blames checkout (the loudest victim) while ignoring the root cause three hops away.
 
-**FAULTLINE solves this because its whole brain lives in FalkorDB**:
+**FAULTLINE solves this because its entire brain lives in FalkorDB**:
 - Traverses the 5-layer dependency graph to isolate the lowest common dependency and anomalous callers.
 - Computes real-time surviving transaction capacity with `algo.maxFlow` over pod-routed checkout pipelines.
 - Pages the exact engineer on-call who fixed this failure pattern in the past (`who_to_page.cypher`).
-- Automatically traces every agent thought and MCP tool execution as a `Step` node on the graph blackboard.
-- **The Jaw-Drop Moment**: When the outage recurs, episodic memory triggers the **Fast Path**—slashing investigation tool steps from **10 to 6 (a 40% reduction)** and solving the incident in seconds.
+- Automatically traces every agent step as a `Step` node on the graph blackboard.
+- **Fast Path Step Reduction**: When an outage recurs, episodic memory triggers the **Fast Path**—skipping exploratory investigator nodes and reducing graph tool calls from **10 to 6 (a 40% reduction)**.
 
 ---
 
@@ -58,13 +58,56 @@ No auxiliary vector databases. No shadow JSON stores. Every agent decision is a 
 
 ---
 
-## The Jaw-Drop Moment: 40% Step Reduction via Episodic Memory
+## System Architecture
 
-When an incident hits for the first time, FAULTLINE explores multiple hypotheses across 10 graph tool calls. Once resolved, **Scribe** commits the incident, failure signature, and verified runbook into FalkorDB memory. On repeat failure, **Historian** recognizes the pattern and activates the Fast Path:
+```
+                      +-------------------+
+                      |  Fault Simulator  |  (28-node OTel Astronomy Shop model)
+                      +---------+---------+
+                                |  emits Alert, Anomaly, updates live_rps
+                                v
++-----------------------------------------------------------------+
+|                   FalkorDB Graph (Whole Brain)                  |
+|  [Topology + Capacity]  [Org & Ownership]  [Signals & Anomalies]|
+|  [Memory & Runbooks]    [Agent Trace & Hypothesis Blackboard]   |
++-------------------------------+---------------------------------+
+                                ^
+                                | Cypher Queries (FastMCP Traced)
+                                v
+                      +-------------------+
+                      | Agent Workflow (LangGraph)
+                      | - Commander       |
+                      | - Topology Inv.   |
+                      | - Change Inv.     |
+                      | - Historian       |
+                      | - Remediator      |
+                      | - Scribe          |
+                      +---------+---------+
+                                | proposed fix
+                                v
+                      +-------------------+
+                      | Human Approval    |
+                      +---------+---------+
+                                | rollback / scale / restart
+                                v
+                      +-------------------+
+                      | Simulator Action  | (Verifies Recovery)
+                      +-------------------+
+```
+
+> [!NOTE]
+> **Implementation Note on Agent Decision Logic**:
+> Agent decisions in this build are deterministic policies over graph query results (no LLM in the loop), chosen for reproducible benchmarks. Remediation actions are mapped per root-cause type. `agents/llm.py` holds the provider-agnostic client for the LLM-driven version.
+
+---
+
+## Fast Path Step Reduction: 10 → 6 Tool Calls (40% Reduction)
+
+When an incident hits for the first time, FAULTLINE explores multiple hypotheses across 10 graph tool calls. Once resolved, **Scribe** commits the incident, failure signature, and verified runbook into FalkorDB memory. On repeat failure, **Historian** recognizes the pattern via vector similarity and structural overlap, triggering the **Fast Path** to skip the exploratory investigator subgraphs:
 
 ```
 ======================================================================
- JAW-DROP VERIFICATION: Cold Run vs. Warm Fast-Path
+ EXECUTION TRACE: Cold Run vs. Warm Fast-Path
 ======================================================================
 
 --- [1/2] COLD INCIDENT (First Occurrence) ---
@@ -97,21 +140,22 @@ When an incident hits for the first time, FAULTLINE explores multiple hypotheses
 
 ## Empirical Benchmark Results
 
-We evaluated **FAULTLINE across 12 distinct fault scenarios** over multiple seeds, comparing:
-1. **Baseline (No Graph)**: Traditional log correlation selecting the loudest alerting service.
-2. **FAULTLINE (Cold Memory)**: Full graph tool suite without prior incident history.
-3. **FAULTLINE (Warm Memory)**: Full graph tool suite with FalkorDB episodic memory enabled.
+We evaluated FAULTLINE across **12 distinct fault scenarios** over 3 random seeds (36 total incidents), comparing:
+1. **Baseline: loudest-alert heuristic (no LLM, no graph)**: Evaluates root cause by selecting the first alerting entity.
+2. **FAULTLINE (Cold Memory)**: Full graph traversal tool suite with zero prior incident memory.
+3. **FAULTLINE (Warm Memory)**: Full graph tool suite with FalkorDB episodic memory populated from prior incidents.
 
-| Evaluation Condition | Top-1 Accuracy | Top-3 Accuracy | Mean Graph Steps | Mean TTM (s) | False Action Rate |
-|---|---|---|---|---|---|
-| **Baseline (No Graph)** | 16.7% | 33.3% | 1.0 | 290.8s | 66.7% |
-| **FAULTLINE (Cold Memory)** | 66.7% | 75.0% | 10.0 | 55.0s | 25.0% |
-| **FAULTLINE (Warm Memory)** | **66.7%** | **75.0%** | **6.0 (↓ 40%)** | **22.0s (↓ 60%)** | **25.0%** |
+| Evaluation Condition | Top-1 Accuracy | Top-3 Accuracy | Mean Graph Steps | False Action Rate |
+|---|---|---|---|---|
+| **Baseline: loudest-alert heuristic (no LLM, no graph)** | 16.7% | 33.3% | 1.0 | 66.7% |
+| **FAULTLINE (Cold Memory)** | 66.7% | 75.0% | 10.0 | 25.0% |
+| **FAULTLINE (Warm Memory)** | **66.7%** | **75.0%** | **6.0 (↓ 40%)** | **25.0%** |
 
 ### Benchmark Takeaways:
-- **Graph Traversal Beats Flat Logs**: Baseline accuracy plummets on caller-side or victim-masking faults (e.g., cartservice retry storm vs. valkey-cart). FAULTLINE's lowest common dependency traversal maintains high accuracy.
-- **Episodic Memory Slashes Investigation Overhead**: Warm memory cuts graph tool steps from 10.0 to 6.0 without sacrificing remediation accuracy.
-- **Reproduce anytime**: Run `python tasks.py bench`.
+1. **Graph Traversal vs. Loudest-Alert Heuristic**: The baseline loudest-alert heuristic achieves only 16.7% Top-1 accuracy and a 66.7% false action rate because alerts fire on symptoms rather than causes (e.g. `frontend` alerting when `paymentservice` fails, or `valkey-cart` alerting during a `cartservice` retry storm). FAULTLINE's lowest common dependency and neighbor graph traversal raises Top-1 accuracy to 66.7% (75.0% Top-3).
+2. **Fast Path Step Reduction**: Warm episodic memory skips the parallel investigator subgraphs on repeat failures when a high-confidence runbook match is recalled from FalkorDB vector memory. This reduces mean graph tool calls from 10.0 to 6.0 (a 40% reduction).
+3. **Memory vs. Accuracy**: Top-1 and Top-3 accuracy are identical between Cold and Warm conditions (66.7% Top-1, 75.0% Top-3). Episodic memory does not alter the diagnosis; it optimizes execution cost and steps by short-circuiting exploratory investigation.
+4. **Reproduce anytime**: Run `python tasks.py bench` (outputs to `bench/results.md`).
 
 ---
 
@@ -170,7 +214,7 @@ graph TD
 
 ## Core Cypher Queries & FalkorDB Algorithms
 
-Every tool exposed to the LangGraph agents executes a dedicated Cypher query:
+Every tool executes a dedicated Cypher query:
 
 | Tool Name | Query File | Algorithm / Operation | Description |
 |---|---|---|---|
@@ -204,44 +248,57 @@ FAULTLINE includes a real-time incident command dashboard built with **Next.js 1
 
 ---
 
-## Quickstart Guide
+## Local Setup & Port Directory
+
+### Port Allocation
+To avoid port conflicts, FAULTLINE uses distinct ports:
+- **Port 3000**: **FalkorDB Browser** (`http://localhost:3000`) — Web console to explore the live FalkorDB graph.
+- **Port 3001**: **FAULTLINE Web Dashboard** (`http://localhost:3001`) — Next.js 15 real-time incident commander UI.
+- **Port 8000**: **FastAPI Backend Server** (`http://localhost:8000`) — REST & SSE streaming endpoint.
+- **Port 6379**: **FalkorDB Database** — Redis-compatible Cypher protocol.
 
 ### Prerequisites
 - Python 3.11+
 - Docker & Docker Compose
 - Node.js 18+ (for Web UI)
 
-### 1. Launch FalkorDB
+### Step 1: Install Dependencies
+```bash
+pip install -r requirements.txt
+cd web && npm install && cd ..
+```
+
+### Step 2: Launch FalkorDB Container
 ```bash
 python tasks.py up
 ```
 *Starts FalkorDB on port 6379 and FalkorDB Browser on `http://localhost:3000`.*
 
-### 2. Seed Topology & Memory
+### Step 3: Seed Topology & Memory
 ```bash
 python tasks.py seed
 ```
-*Seeds the 28-node Astronomy Shop topology, team rotations, and historical episodic memory.*
+*Seeds the 28-node Astronomy Shop topology, team rotations, and baseline episodic memory.*
 
-### 3. Verify Cypher Queries & Invariants
+### Step 4: Verify Cypher Queries & Invariants
 ```bash
 python tasks.py test-queries
 python -m pytest sim/test_sim.py
 ```
 
-### 4. Run the Cold vs. Warm Fast-Path Test
+### Step 5: Run the Cold vs. Warm Fast-Path Test
 ```bash
 python tasks.py test-agents
 ```
-*Demonstrates the 40% step reduction on repeat failure.*
+*Demonstrates the 40% step reduction (10 -> 6 tool steps) on repeat failure.*
 
-### 5. Run the Full Benchmark Suite
+### Step 6: Run the Full Benchmark Suite
 ```bash
 python tasks.py bench
 ```
-*Evaluates Baseline vs. Cold vs. Warm memory across 12 fault types.*
+*Evaluates Baseline vs. Cold vs. Warm memory across 36 incidents.*
 
-### 6. Launch the Live Dashboard
+### Step 7: Launch the Live Dashboard
 In terminal 1 (FastAPI SSE Server):
 ```bash
 python tasks.py api
@@ -251,7 +308,7 @@ In terminal 2 (Next.js Dashboard):
 ```bash
 python tasks.py web
 ```
-Open **`http://localhost:3001`** in your browser.
+Open **`http://localhost:3001`** in your browser. (Explore graph in parallel at `http://localhost:3000`.)
 
 ---
 
