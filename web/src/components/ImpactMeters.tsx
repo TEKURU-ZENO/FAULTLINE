@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import { Gauge, ShieldAlert, Clock, Activity, CheckCircle2 } from "lucide-react";
 
 interface ImpactMetersProps {
   survivingCapacity: number;
@@ -10,6 +9,45 @@ interface ImpactMetersProps {
   activeAlertCount: number;
   incidentStatus: "healthy" | "firing" | "investigating" | "resolved";
   elapsedSeconds: number;
+  connected: boolean;
+}
+
+const STATUS_STYLE: Record<ImpactMetersProps["incidentStatus"], { dot: string; text: string; label: string }> = {
+  healthy: { dot: "bg-ok", text: "text-ink-200", label: "All systems nominal" },
+  firing: { dot: "bg-crit animate-pulse", text: "text-crit", label: "Incident firing" },
+  investigating: { dot: "bg-focus animate-pulse", text: "text-focus", label: "Agents investigating" },
+  resolved: { dot: "bg-ok", text: "text-ok", label: "Resolved" },
+};
+
+function formatTime(secs: number) {
+  const mins = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${mins.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+function Metric({
+  label,
+  value,
+  unit,
+  tone = "text-ink-100",
+  children,
+}: {
+  label: string;
+  value: React.ReactNode;
+  unit?: string;
+  tone?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col justify-center gap-1 px-5">
+      <span className="text-2xs text-ink-400">{label}</span>
+      <div className="flex items-baseline gap-1.5">
+        <span className={`font-mono text-lg font-medium leading-none tracking-tight tabular ${tone}`}>{value}</span>
+        {unit && <span className="font-mono text-2xs text-ink-500">{unit}</span>}
+      </div>
+      {children}
+    </div>
+  );
 }
 
 export default function ImpactMeters({
@@ -19,136 +57,71 @@ export default function ImpactMeters({
   activeAlertCount,
   incidentStatus,
   elapsedSeconds,
+  connected,
 }: ImpactMetersProps) {
-  const capacityPct = Math.round((survivingCapacity / nominalCapacity) * 100);
-
-  const formatTime = (secs: number) => {
-    const mins = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${mins.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  };
+  const capacityPct = nominalCapacity > 0 ? Math.round((survivingCapacity / nominalCapacity) * 100) : 0;
+  const capTone = capacityPct < 50 ? "text-crit" : capacityPct < 90 ? "text-warn" : "text-ink-100";
+  const capBar = capacityPct < 50 ? "bg-crit" : capacityPct < 90 ? "bg-warn" : "bg-ok";
+  const status = STATUS_STYLE[incidentStatus];
 
   return (
-    <header className="h-16 border-b border-slate-800 bg-[#090d16] px-6 flex items-center justify-between z-10">
-      {/* Brand & Incident State */}
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 font-mono font-bold text-lg">
-            ⚡
-          </div>
-          <div>
-            <div className="text-base font-bold tracking-tight text-slate-100 flex items-center gap-2">
-              FAULTLINE
-              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-                FalkorDB Brain
-              </span>
-            </div>
-            <div className="text-[11px] text-slate-400 font-mono">
-              Autonomous Incident Commander
-            </div>
-          </div>
-        </div>
-
-        <div className="h-6 w-px bg-slate-800 mx-2" />
-
-        {/* Live Status Pill */}
-        <div
-          className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium border ${
-            incidentStatus === "firing"
-              ? "bg-rose-950/50 border-rose-800 text-rose-300 animate-pulse"
-              : incidentStatus === "investigating"
-              ? "bg-amber-950/50 border-amber-800 text-amber-300"
-              : incidentStatus === "resolved"
-              ? "bg-emerald-950/50 border-emerald-800 text-emerald-300"
-              : "bg-slate-900 border-slate-800 text-slate-400"
-          }`}
-        >
-          <span
-            className={`w-2 h-2 rounded-full ${
-              incidentStatus === "firing"
-                ? "bg-rose-500"
-                : incidentStatus === "investigating"
-                ? "bg-amber-400 animate-ping"
-                : incidentStatus === "resolved"
-                ? "bg-emerald-400"
-                : "bg-slate-500"
-            }`}
+    <header className="flex h-[68px] shrink-0 items-stretch border-b border-ink-800 bg-ink-900">
+      {/* Brand */}
+      <div className="flex items-center gap-3 border-r border-ink-800 px-5">
+        <svg viewBox="0 0 32 32" className="h-7 w-7" aria-hidden>
+          <rect width="32" height="32" rx="8" fill="#191e24" />
+          <path
+            d="M6 20 L12 20 L15 9 L18 24 L21 15 L26 15"
+            fill="none"
+            stroke="#7fb2e5"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
           />
-          <span className="uppercase">{incidentStatus}</span>
+        </svg>
+        <div className="leading-tight">
+          <div className="text-[15px] font-semibold tracking-[-0.02em] text-ink-100">Faultline</div>
+          <div className="text-2xs text-ink-400">Incident commander on FalkorDB</div>
         </div>
       </div>
 
-      {/* Impact Gauges */}
-      <div className="flex items-center gap-6">
-        {/* maxFlow Checkout Capacity Gauge */}
-        <div className="flex items-center gap-3 bg-slate-900/60 border border-slate-800 px-3.5 py-1.5 rounded-lg">
-          <Gauge
-            className={`w-4 h-4 ${
-              capacityPct < 50
-                ? "text-rose-400"
-                : capacityPct < 90
-                ? "text-amber-400"
-                : "text-emerald-400"
-            }`}
-          />
-          <div>
-            <div className="text-[10px] uppercase font-mono text-slate-400 leading-none mb-1">
-              Surviving Checkout Capacity (maxFlow)
-            </div>
-            <div className="flex items-baseline gap-1.5">
-              <span
-                className={`font-mono font-bold text-sm leading-none ${
-                  capacityPct < 50
-                    ? "text-rose-400"
-                    : capacityPct < 90
-                    ? "text-amber-400"
-                    : "text-emerald-400"
-                }`}
-              >
-                {survivingCapacity.toFixed(0)} rps
-              </span>
-              <span className="text-[11px] font-mono text-slate-500">
-                / {nominalCapacity} rps ({capacityPct}%)
-              </span>
-            </div>
-          </div>
-        </div>
+      {/* Incident state */}
+      <div className="flex items-center gap-2.5 border-r border-ink-800 px-5" role="status" aria-live="polite">
+        <span className={`h-2 w-2 rounded-full ${status.dot}`} />
+        <span className={`text-sm font-medium ${status.text}`}>{status.label}</span>
+        {incidentStatus !== "healthy" && (
+          <span className="ml-1 font-mono text-sm text-ink-400 tabular">{formatTime(elapsedSeconds)}</span>
+        )}
+      </div>
 
-        {/* Blast Radius Count */}
-        <div className="flex items-center gap-3 bg-slate-900/60 border border-slate-800 px-3.5 py-1.5 rounded-lg">
-          <ShieldAlert
-            className={`w-4 h-4 ${blastRadiusCount > 0 ? "text-amber-400" : "text-slate-500"}`}
-          />
-          <div>
-            <div className="text-[10px] uppercase font-mono text-slate-400 leading-none mb-1">
-              Blast Radius
-            </div>
-            <div className="font-mono font-bold text-sm leading-none text-slate-200">
-              {blastRadiusCount} Services Upstream
-            </div>
+      {/* Metrics */}
+      <div className="flex flex-1 items-stretch divide-x divide-ink-800 overflow-x-auto">
+        <Metric label="Surviving checkout capacity" value={survivingCapacity.toFixed(0)} unit={`/ ${nominalCapacity} rps`} tone={capTone}>
+          <div className="mt-0.5 h-[3px] w-40 overflow-hidden rounded-full bg-ink-800">
+            <div
+              className={`h-full rounded-full transition-[width] duration-700 ease-spring ${capBar}`}
+              style={{ width: `${Math.min(100, capacityPct)}%` }}
+            />
           </div>
-        </div>
+        </Metric>
+        <Metric
+          label="Blast radius"
+          value={blastRadiusCount}
+          unit={blastRadiusCount === 1 ? "service upstream" : "services upstream"}
+          tone={blastRadiusCount > 0 ? "text-warn" : "text-ink-100"}
+        />
+        <Metric
+          label="Active alerts"
+          value={activeAlertCount}
+          unit="firing"
+          tone={activeAlertCount > 0 ? "text-crit" : "text-ink-100"}
+        />
+      </div>
 
-        {/* Active Alerts */}
-        <div className="flex items-center gap-3 bg-slate-900/60 border border-slate-800 px-3.5 py-1.5 rounded-lg">
-          <Activity
-            className={`w-4 h-4 ${activeAlertCount > 0 ? "text-rose-400" : "text-emerald-400"}`}
-          />
-          <div>
-            <div className="text-[10px] uppercase font-mono text-slate-400 leading-none mb-1">
-              Active Alerts
-            </div>
-            <div className="font-mono font-bold text-sm leading-none text-slate-200">
-              {activeAlertCount} Firing
-            </div>
-          </div>
-        </div>
-
-        {/* Elapsed Timer */}
-        <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 px-3 py-1.5 rounded-lg text-slate-300">
-          <Clock className="w-4 h-4 text-slate-500" />
-          <span className="font-mono text-sm font-semibold">{formatTime(elapsedSeconds)}</span>
-        </div>
+      {/* Connection */}
+      <div className="flex items-center gap-2 border-l border-ink-800 px-5 text-2xs text-ink-400">
+        <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-ok" : "bg-crit"}`} />
+        {connected ? "API connected" : "API offline"}
       </div>
     </header>
   );

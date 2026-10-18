@@ -3,61 +3,130 @@
 @tailwind utilities;
 
 :root {
-  --background: #080c14;
-  --surface: #0f172a;
-  --border: #1e293b;
+  --bg: #0a0c0f;
+  color-scheme: dark;
 }
 
 body {
-  background-color: var(--background);
-  color: #f1f5f9;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background-color: var(--bg);
+  color: #e7e9ec;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";
   overflow: hidden;
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #0b1120;
-}
-::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+.tabular {
+  font-variant-numeric: tabular-nums;
 }
 
-/* Pulsing node halo animation */
+/* Film grain to break the flat dark surfaces */
+.grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* Keyboard focus, everywhere */
+:focus-visible {
+  outline: 2px solid #7fb2e5;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #232a32;
+  border-radius: 8px;
+  border: 2px solid #0f1216;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #323a44;
+}
+
+/* Expanding ring on alerting / inspected nodes */
 @keyframes pulse-ring {
   0% {
     r: 14;
-    opacity: 0.8;
+    opacity: 0.7;
   }
   100% {
-    r: 28;
+    r: 30;
     opacity: 0;
   }
 }
-
-.pulse-ring-alert {
-  animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+.pulse-ring {
+  animation: pulse-ring 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
 }
 
-@keyframes pulse-node-active {
-  0%, 100% {
-    transform: scale(1);
-    filter: drop-shadow(0 0 12px rgba(56, 189, 248, 0.9));
-  }
-  50% {
-    transform: scale(1.15);
-    filter: drop-shadow(0 0 20px rgba(56, 189, 248, 1));
+/* Marching dashes on live flow edges */
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -16;
   }
 }
+.flow-dash {
+  animation: dash-flow 1.2s linear infinite;
+}
 
-.pulse-active {
-  animation: pulse-node-active 0.8s ease-in-out infinite;
+/* Staggered entry for feed items and drawers */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise-in {
+  animation: rise-in 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.slide-in-right {
+  animation: slide-in-right 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, #13171c 25%, #191e24 50%, #13171c 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Flame, Play, RefreshCw, CheckCircle, Database, Shield, ChevronRight } from "lucide-react";
+import { Play, RotateCcw, ArrowUpRight, Zap } from "lucide-react";
 
 interface ChaosRailProps {
   onInject: (faultId: number) => void;
@@ -15,10 +15,40 @@ interface ChaosRailProps {
 }
 
 const FAULT_OPTIONS = [
-  { id: 1, name: "Fault 1: Bad Deploy on paymentservice", desc: "v2.4.1 deploy causes p99 latency spike and 5xx errors on checkout." },
-  { id: 2, name: "Fault 2: DB Pool Exhaustion on orders-pg", desc: "Leaked connections exhaust pool, blocking checkout and accounting writes." },
-  { id: 8, name: "Fault 8: Retry Storm Amplification", desc: "Caller cartservice spams uncapped retries, crashing victim valkey-cart." },
+  {
+    id: 1,
+    target: "paymentservice",
+    name: "Bad deploy",
+    desc: "v2.4.1 rollout spikes p99 latency and returns 5xx on checkout.",
+  },
+  {
+    id: 2,
+    target: "orders-pg",
+    name: "Connection pool exhaustion",
+    desc: "Leaked connections block checkout and accounting writes.",
+  },
+  {
+    id: 8,
+    target: "cartservice → valkey-cart",
+    name: "Retry storm",
+    desc: "Uncapped client retries amplify load until the cache falls over.",
+  },
 ];
+
+const TENANTS = [
+  { value: "tenant:demo", hint: "seeded memory" },
+  { value: "tenant:acme", hint: "isolated" },
+  { value: "tenant:eval_cold", hint: "zero memory" },
+];
+
+function SectionTitle({ children, aside }: { children: React.ReactNode; aside?: React.ReactNode }) {
+  return (
+    <div className="mb-3 flex items-baseline justify-between">
+      <h2 className="text-[13px] font-medium text-ink-200">{children}</h2>
+      {aside}
+    </div>
+  );
+}
 
 export default function ChaosRail({
   onInject,
@@ -34,121 +64,124 @@ export default function ChaosRail({
   const [autoApprove, setAutoApprove] = useState<boolean>(true);
 
   return (
-    <div className="w-80 h-full flex flex-col bg-[#090d16] border-r border-slate-800 select-none text-xs">
-      {/* Rail Header */}
-      <div className="p-4 border-b border-slate-800 bg-slate-900/40 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Flame className="w-4 h-4 text-rose-400" />
-          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200 font-mono">
-            Chaos & Controls
-          </h2>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {/* Tenant Switcher */}
-        <div>
-          <label className="text-[10px] font-mono uppercase text-slate-400 font-bold block mb-1.5 flex items-center gap-1.5">
-            <Database className="w-3 h-3 text-sky-400" /> FalkorDB Tenant Graph
-          </label>
-          <select
-            value={activeTenant}
-            onChange={(e) => onTenantChange(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-slate-200 font-mono text-xs focus:outline-none focus:border-sky-500"
-          >
-            <option value="tenant:demo">tenant:demo (Seeded Memory)</option>
-            <option value="tenant:acme">tenant:acme (Isolated Tenant)</option>
-            <option value="tenant:eval_cold">tenant:eval_cold (Zero Memory)</option>
-          </select>
-          <div className="text-[10px] text-slate-500 font-mono mt-1">
-            Multigraph isolation: tenant graphs never leak state.
+    <aside className="flex h-full w-[300px] shrink-0 flex-col border-r border-ink-800 bg-ink-900 text-sm">
+      <div className="flex-1 space-y-8 overflow-y-auto px-5 pb-6 pt-5">
+        {/* Tenant */}
+        <section>
+          <SectionTitle>Tenant graph</SectionTitle>
+          <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg bg-ink-800">
+            {TENANTS.map((t) => {
+              const active = activeTenant === t.value;
+              return (
+                <button
+                  key={t.value}
+                  onClick={() => onTenantChange(t.value)}
+                  aria-pressed={active}
+                  className={`flex items-center justify-between px-3 py-2 text-left transition-colors duration-200 ${
+                    active ? "bg-ink-800 text-ink-100" : "bg-ink-850 text-ink-400 hover:bg-ink-800/70 hover:text-ink-200"
+                  }`}
+                >
+                  <span className="font-mono text-xs">{t.value}</span>
+                  <span className={`text-2xs ${active ? "text-focus" : "text-ink-500"}`}>{t.hint}</span>
+                </button>
+              );
+            })}
           </div>
-        </div>
+          <p className="mt-2 text-2xs leading-relaxed text-ink-500 [text-wrap:pretty]">
+            Each tenant is its own FalkorDB graph. State never crosses between them.
+          </p>
+        </section>
 
-        {/* Chaos Injection Panel */}
-        <div className="space-y-3">
-          <label className="text-[10px] font-mono uppercase text-slate-400 font-bold block flex items-center gap-1.5">
-            <Flame className="w-3 h-3 text-rose-400" /> Fault Scenarios
-          </label>
-
-          <div className="space-y-2">
-            {FAULT_OPTIONS.map((f) => (
-              <div
-                key={f.id}
-                onClick={() => setSelectedFault(f.id)}
-                className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
-                  selectedFault === f.id
-                    ? "bg-rose-950/30 border-rose-600/80 text-rose-200"
-                    : "bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700"
-                }`}
-              >
-                <div className="font-semibold text-[11px] mb-0.5">{f.name}</div>
-                <div className="text-[10px] text-slate-400 leading-snug">{f.desc}</div>
-              </div>
-            ))}
+        {/* Faults */}
+        <section>
+          <SectionTitle aside={<kbd className="rounded border border-ink-700 px-1.5 font-mono text-2xs text-ink-400">i</kbd>}>
+            Fault scenario
+          </SectionTitle>
+          <div role="radiogroup" aria-label="Fault scenario" className="space-y-1.5">
+            {FAULT_OPTIONS.map((f) => {
+              const active = selectedFault === f.id;
+              return (
+                <button
+                  key={f.id}
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setSelectedFault(f.id)}
+                  className={`group relative w-full rounded-lg py-2.5 pl-4 pr-3 text-left transition-colors duration-200 ${
+                    active ? "bg-ink-800" : "hover:bg-ink-850"
+                  }`}
+                >
+                  <span
+                    className={`absolute left-0 top-2.5 bottom-2.5 w-[2px] rounded-full transition-colors duration-200 ${
+                      active ? "bg-crit" : "bg-ink-700 group-hover:bg-ink-600"
+                    }`}
+                  />
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className={`text-[13px] font-medium ${active ? "text-ink-100" : "text-ink-300"}`}>{f.name}</span>
+                    <span className="font-mono text-2xs text-ink-500">#{f.id}</span>
+                  </div>
+                  <div className="mt-0.5 font-mono text-2xs text-ink-400">{f.target}</div>
+                  <p className="mt-1 text-2xs leading-relaxed text-ink-500 [text-wrap:pretty]">{f.desc}</p>
+                </button>
+              );
+            })}
           </div>
 
           <button
             onClick={() => onInject(selectedFault)}
-            className="w-full mt-2 py-2 px-3 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-mono font-semibold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-rose-950/50 transition-colors"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-crit/40 bg-crit-dim py-2 text-[13px] font-medium text-crit transition-[background-color,transform] duration-200 hover:bg-crit/20 active:scale-[0.98]"
           >
-            <Flame className="w-3.5 h-3.5" />
-            Inject Chaos (Press &apos;i&apos;)
+            <Zap className="h-3.5 w-3.5" strokeWidth={2} />
+            Inject fault
           </button>
-        </div>
+        </section>
 
-        {/* Investigation Controls */}
-        <div className="space-y-3 pt-4 border-t border-slate-800">
-          <label className="text-[10px] font-mono uppercase text-slate-400 font-bold block flex items-center gap-1.5">
-            <Play className="w-3 h-3 text-sky-400" /> Autonomous Commander
+        {/* Commander */}
+        <section>
+          <SectionTitle>Commander</SectionTitle>
+          <label className="mb-3 flex cursor-pointer items-center justify-between rounded-lg bg-ink-850 px-3 py-2.5">
+            <span className="text-[13px] text-ink-300">Auto-approve remediation</span>
+            <span className="relative inline-flex">
+              <input
+                type="checkbox"
+                checked={autoApprove}
+                onChange={(e) => setAutoApprove(e.target.checked)}
+                className="peer sr-only"
+              />
+              <span className="h-[18px] w-8 rounded-full bg-ink-700 transition-colors duration-200 peer-checked:bg-focus/80 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-focus" />
+              <span className="absolute left-[3px] top-[3px] h-3 w-3 rounded-full bg-ink-100 transition-transform duration-200 ease-spring peer-checked:translate-x-[14px]" />
+            </span>
           </label>
-
-          <div className="flex items-center gap-2 mb-2">
-            <input
-              type="checkbox"
-              id="auto-approve"
-              checked={autoApprove}
-              onChange={(e) => setAutoApprove(e.target.checked)}
-              className="rounded bg-slate-900 border-slate-700 text-sky-500 focus:ring-0"
-            />
-            <label htmlFor="auto-approve" className="text-[11px] text-slate-300 font-mono">
-              Auto-approve remediations
-            </label>
-          </div>
 
           <button
             onClick={() => onInvestigate(autoApprove)}
             disabled={isInvestigating}
-            className="w-full py-2.5 px-3 bg-sky-600 hover:bg-sky-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg font-mono font-semibold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-sky-950/50 transition-colors"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-ink-100 py-2.5 text-[13px] font-medium text-ink-950 transition-[background-color,transform] duration-200 hover:bg-white active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-ink-800 disabled:text-ink-500"
           >
-            <Play className="w-3.5 h-3.5" />
-            {isInvestigating ? "Investigating..." : "Launch Multi-Agent RCA"}
+            <Play className="h-3.5 w-3.5" strokeWidth={2.2} fill="currentColor" />
+            {isInvestigating ? "Investigating…" : "Run root-cause analysis"}
           </button>
 
           <button
             onClick={onHeal}
-            className="w-full py-1.5 px-3 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg font-mono text-xs flex items-center justify-center gap-1.5 transition-colors"
+            className="mt-2 flex w-full items-center justify-center gap-1.5 py-1.5 text-xs text-ink-400 transition-colors duration-200 hover:text-ink-200"
           >
-            <RefreshCw className="w-3 h-3" />
-            Reset & Heal System
+            <RotateCcw className="h-3 w-3" />
+            Reset and heal system
+          </button>
+        </section>
+      </div>
+
+      {hasPostmortem && (
+        <div className="border-t border-ink-800 p-4">
+          <button
+            onClick={onOpenPostmortem}
+            className="group flex w-full items-center justify-between rounded-lg bg-ok-dim px-3 py-2.5 text-[13px] text-ok transition-colors duration-200 hover:bg-ok/20"
+          >
+            <span className="font-medium">Open postmortem</span>
+            <ArrowUpRight className="h-4 w-4 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
           </button>
         </div>
-
-        {/* Postmortem Drawer Button */}
-        {hasPostmortem && (
-          <div className="pt-4 border-t border-slate-800">
-            <button
-              onClick={onOpenPostmortem}
-              className="w-full py-2 px-3 bg-emerald-950/60 border border-emerald-600/60 hover:bg-emerald-900/60 text-emerald-200 rounded-lg font-mono text-xs flex items-center justify-between transition-colors"
-            >
-              <span className="flex items-center gap-1.5 font-semibold">
-                <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> View Postmortem
-              </span>
-              <ChevronRight className="w-3.5 h-3.5 text-emerald-400" />
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    </aside>
   );
 }

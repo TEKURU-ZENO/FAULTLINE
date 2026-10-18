@@ -31,14 +31,20 @@ export default function DashboardPage() {
   const [postmortemOpen, setPostmortemOpen] = useState<boolean>(false);
   const [postmortemReport, setPostmortemReport] = useState<any>(null);
 
+  const [loadState, setLoadState] = useState<"loading" | "offline" | "ready">("loading");
+
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   // 1. Fetch graph topology
   const fetchGraph = useCallback(async (tenant: string = activeTenant) => {
     try {
       const res = await fetch(`${API_BASE}/api/graph?tenant=${tenant}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setLoadState("offline");
+        return;
+      }
       const data = await res.json();
+      setLoadState("ready");
       setNodes(data.nodes || []);
       setEdges(data.edges || []);
       setSurvivingCapacity(data.surviving_capacity || 1200);
@@ -50,7 +56,8 @@ export default function DashboardPage() {
         setIncidentStatus("firing");
       }
     } catch (e) {
-      console.error("Failed to load graph:", e);
+      console.warn("Failed to load graph:", e);
+      setLoadState("offline");
     }
   }, [activeTenant]);
 
@@ -121,17 +128,6 @@ export default function DashboardPage() {
     };
   }, [fetchGraph]);
 
-  // 3. Keyboard Shortcut 'i' to Inject Demo Fault
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "i" && !e.metaKey && !e.ctrlKey) {
-        handleInject(1);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
   // Handlers
   const handleInject = async (faultId: number) => {
     try {
@@ -171,10 +167,25 @@ export default function DashboardPage() {
     }
   };
 
+  // 3. Keyboard Shortcut 'i' to Inject Demo Fault
+  const injectRef = useRef(handleInject);
+  injectRef.current = handleInject;
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))) return;
+      if (e.key === "i" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        injectRef.current(1);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const activeAlertCount = nodes.filter((n) => n.state === "alerting").length;
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#080c14] text-slate-100">
+    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-ink-950 text-ink-100">
       {/* Top Strip: Impact Meters */}
       <ImpactMeters
         survivingCapacity={survivingCapacity}
@@ -183,6 +194,7 @@ export default function DashboardPage() {
         activeAlertCount={activeAlertCount}
         incidentStatus={incidentStatus}
         elapsedSeconds={elapsedSeconds}
+        connected={loadState !== "offline"}
       />
 
       {/* Main 3-Pane Body */}
@@ -203,14 +215,19 @@ export default function DashboardPage() {
         />
 
         {/* Center: Live Topology & Causal Path Graph */}
-        <main className="flex-1 h-full p-4 flex flex-col min-w-0 bg-[#080c14]">
-          <div className="flex-1 w-full h-full relative">
+        <main id="topology" className="flex h-full min-w-0 flex-1 flex-col bg-ink-950 p-3">
+          <div className="relative h-full w-full flex-1">
             <GraphCanvas
               nodes={nodes}
               edges={edges}
               pulsedNodes={pulsedNodes}
               highlightedPath={highlightedPath}
               onNodeClick={(node) => setPulsedNodes([node.name])}
+              loadState={loadState}
+              onRetry={() => {
+                setLoadState("loading");
+                fetchGraph();
+              }}
             />
           </div>
         </main>

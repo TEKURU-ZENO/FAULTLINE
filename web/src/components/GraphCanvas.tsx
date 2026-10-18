@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { Zap, AlertTriangle, Activity, Database, Server, Cpu, Layers } from "lucide-react";
+import { X } from "lucide-react";
 
 export interface GraphNode {
   id: string;
@@ -30,6 +30,8 @@ interface GraphCanvasProps {
   pulsedNodes?: string[];
   highlightedPath?: string[];
   onNodeClick?: (node: GraphNode) => void;
+  loadState?: "loading" | "offline" | "ready";
+  onRetry?: () => void;
 }
 
 // Hand-tuned coordinates for the 28-node Astronomy Shop topology
@@ -76,26 +78,79 @@ const NODE_LAYOUT: Record<string, { x: number; y: number }> = {
   "k8s-node-3": { x: 260, y: 260 },
 };
 
+// Deterministic fallback so unknown nodes don't jump between renders
+function fallbackCoord(name: string) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return { x: 400 + (h % 200), y: 300 + ((h >>> 8) % 200) };
+}
+
+const C = {
+  crit: "#e5534b",
+  warn: "#d9a440",
+  ok: "#57ab5a",
+  anom: "#d9774b",
+  focus: "#7fb2e5",
+  edge: "#232a32",
+  flow: "#535d69",
+  nodeFill: "#13171c",
+  nodeStroke: "#535d69",
+  label: "#7b8590",
+};
+
+const STATE_TEXT: Record<GraphNode["state"], string> = {
+  healthy: "text-ok",
+  degraded: "text-warn",
+  alerting: "text-crit",
+  anomalous: "text-anom",
+};
+
+function nodeColor(node: GraphNode) {
+  if (node.state === "alerting") return C.crit;
+  if (node.state === "anomalous") return C.anom;
+  if (node.state === "degraded") return C.warn;
+  return C.nodeStroke;
+}
+
+function NodeShape({ node, x, y, stroke, strokeWidth, fill }: { node: GraphNode; x: number; y: number; stroke: string; strokeWidth: number; fill: string }) {
+  // Shape encodes kind; color is reserved for state
+  if (node.label === "Database" || node.label === "Queue") {
+    return <rect x={x - 12} y={y - 12} width={24} height={24} rx={6} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
+  }
+  if (node.label === "Pod" || node.label === "Node") {
+    return (
+      <path
+        d={`M ${x} ${y - 11} L ${x + 10} ${y - 5.5} L ${x + 10} ${y + 5.5} L ${x} ${y + 11} L ${x - 10} ${y + 5.5} L ${x - 10} ${y - 5.5} Z`}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+      />
+    );
+  }
+  return <circle cx={x} cy={y} r={11} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />;
+}
+
 export default function GraphCanvas({
   nodes,
   edges,
   pulsedNodes = [],
   highlightedPath = [],
   onNodeClick,
+  loadState = "ready",
+  onRetry,
 }: GraphCanvasProps) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
 
-  // Merge backend nodes with hand-tuned coordinates
-  const positionedNodes = useMemo(() => {
-    return nodes.map((node) => {
-      const coord = NODE_LAYOUT[node.name] || { x: 400 + Math.random() * 200, y: 300 + Math.random() * 200 };
-      return {
-        ...node,
-        x: coord.x,
-        y: coord.y,
-      };
-    });
-  }, [nodes]);
+  const positionedNodes = useMemo(
+    () =>
+      nodes.map((node) => {
+        const coord = NODE_LAYOUT[node.name] || fallbackCoord(node.name);
+        return { ...node, x: coord.x, y: coord.y };
+      }),
+    [nodes]
+  );
 
   const nodeMap = useMemo(() => {
     const map = new Map<string, GraphNode & { x: number; y: number }>();
@@ -103,235 +158,258 @@ export default function GraphCanvas({
     return map;
   }, [positionedNodes]);
 
-  const getNodeColor = (node: GraphNode) => {
-    if (node.state === "alerting") return "#f43f5e"; // Rose / Red
-    if (node.state === "anomalous") return "#c084fc"; // Purple
-    if (node.state === "degraded") return "#f59e0b"; // Amber
-    if (node.label === "Database") return "#38bdf8"; // Cyan
-    if (node.label === "Queue") return "#a855f7"; // Violet
-    if (node.label === "Pod") return "#34d399"; // Emerald
-    return "#64748b"; // Slate
-  };
+  const neighbors = useMemo(() => {
+    if (!hovered) return null;
+    const set = new Set<string>([hovered]);
+    edges.forEach((e) => {
+      if (e.source === hovered) set.add(e.target);
+      if (e.target === hovered) set.add(e.source);
+    });
+    return set;
+  }, [hovered, edges]);
 
   const isEdgeInPath = (src: string, dst: string) => {
-    if (highlightedPath.length < 2) return false;
     for (let i = 0; i < highlightedPath.length - 1; i++) {
-      if (
-        (highlightedPath[i] === src && highlightedPath[i + 1] === dst) ||
-        (highlightedPath[i] === dst && highlightedPath[i + 1] === src)
-      ) {
-        return true;
-      }
+      const a = highlightedPath[i];
+      const b = highlightedPath[i + 1];
+      if ((a === src && b === dst) || (a === dst && b === src)) return true;
     }
     return false;
   };
 
+  const selectNode = (node: GraphNode) => {
+    setSelectedNode(node);
+    onNodeClick?.(node);
+  };
+
+  // Keep the inspector in sync with fresh backend state
+  const liveSelected = selectedNode ? nodeMap.get(selectedNode.name) ?? selectedNode : null;
+
   return (
-    <div className="relative w-full h-full bg-[#080c14] overflow-hidden select-none border border-slate-800/80 rounded-xl">
-      {/* Topology Background Grid */}
-      <svg className="w-full h-full" viewBox="0 0 840 680">
-        <defs>
-          <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
-            <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#0f172a" strokeWidth="0.8" />
-          </pattern>
-          <filter id="glow-rose" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="6" result="blur" />
-            <feComposite in="SourceGraphic" in2="blur" operator="over" />
-          </filter>
-          <filter id="glow-cyan" x="-30%" y="-30%" width="160%" height="160%">
-            <feGaussianBlur stdDeviation="8" result="blur" />
-            <feComposite in="SourceGraphic" in2="blur" operator="over" />
-          </filter>
-        </defs>
+    <div className="relative h-full w-full select-none overflow-hidden rounded-xl bg-ink-900">
+      {/* Ambient vignette so the canvas has depth */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{ background: "radial-gradient(ellipse 70% 60% at 50% 45%, #13171c 0%, #0f1216 60%, #0a0c0f 100%)" }}
+        aria-hidden
+      />
 
-        <rect width="100%" height="100%" fill="url(#grid)" />
+      <div className="absolute left-5 top-4 z-10">
+        <h2 className="text-[13px] font-medium text-ink-200">Live topology</h2>
+        <p className="text-2xs text-ink-500">OpenTelemetry Astronomy Shop · {nodes.length} nodes</p>
+      </div>
 
-        {/* 1. Edges */}
-        {edges.map((edge, idx) => {
-          const s = nodeMap.get(edge.source);
-          const t = nodeMap.get(edge.target);
-          if (!s || !t) return null;
-
-          const inPath = isEdgeInPath(edge.source, edge.target);
-          const isFlow = edge.type === "FLOWS_TO";
-          const isCapacityDown = edge.live_rps < edge.capacity_rps && edge.capacity_rps > 0;
-
-          return (
-            <g key={`edge-${idx}`}>
-              <line
-                x1={s.x}
-                y1={s.y}
-                x2={t.x}
-                y2={t.y}
-                stroke={
-                  inPath
-                    ? "#f43f5e"
-                    : isFlow
-                    ? isCapacityDown
-                      ? "#f59e0b"
-                      : "#38bdf8"
-                    : "#1e293b"
-                }
-                strokeWidth={inPath ? 3.5 : isFlow ? 2.0 : 1.2}
-                strokeDasharray={isFlow ? (inPath ? "none" : "5 3") : "none"}
-                strokeOpacity={inPath ? 1.0 : isFlow ? 0.8 : 0.45}
-                filter={inPath ? "url(#glow-rose)" : undefined}
-              />
-            </g>
-          );
-        })}
-
-        {/* 2. Nodes */}
-        {positionedNodes.map((node) => {
-          const isPulsed = pulsedNodes.includes(node.name);
-          const isAlerting = node.state === "alerting";
-          const isAnomalous = node.state === "anomalous";
-          const isDegraded = node.state === "degraded";
-          const color = getNodeColor(node);
-
-          return (
-            <g
-              key={node.id}
-              className="cursor-pointer transition-transform duration-200"
-              onClick={() => {
-                setSelectedNode(node);
-                onNodeClick?.(node);
-              }}
-            >
-              {/* Alert pulsing halo */}
-              {isAlerting && (
-                <circle
-                  cx={node.x}
-                  cy={node.y}
-                  r="18"
-                  fill="none"
-                  stroke="#f43f5e"
-                  strokeWidth="2"
-                  className="pulse-ring-alert"
-                />
-              )}
-
-              {/* Active Agent Inspection Pulse */}
-              {isPulsed && (
-                <circle
-                  cx={node.x}
-                  cy={node.y}
-                  r="22"
-                  fill="none"
-                  stroke="#38bdf8"
-                  strokeWidth="2.5"
-                  className="pulse-ring-alert"
-                  filter="url(#glow-cyan)"
-                />
-              )}
-
-              {/* Base Node Circle */}
-              <circle
-                cx={node.x}
-                cy={node.y}
-                r={node.label === "Database" || node.label === "Queue" ? 14 : 12}
-                fill={isAlerting ? "#1e131d" : isAnomalous ? "#1b1429" : "#0f172a"}
-                stroke={color}
-                strokeWidth={isAlerting || isPulsed ? 2.5 : 1.5}
-                className={isPulsed ? "pulse-active" : ""}
-              />
-
-              {/* Inner Glyph / Status Dot */}
-              <circle
-                cx={node.x}
-                cy={node.y}
-                r="4.5"
-                fill={color}
-              />
-
-              {/* Node Name Label */}
-              <text
-                x={node.x}
-                y={(node.y || 0) + 24}
-                textAnchor="middle"
-                fontSize="10"
-                fontWeight="500"
-                fill={isAlerting ? "#fda4af" : isPulsed ? "#38bdf8" : "#94a3b8"}
-                className="pointer-events-none tracking-tight font-mono"
+      {loadState !== "ready" && nodes.length === 0 ? (
+        <div className="relative flex h-full items-center justify-center">
+          {loadState === "loading" ? (
+            <div className="grid grid-cols-6 gap-6 opacity-70" aria-label="Loading topology">
+              {Array.from({ length: 18 }).map((_, i) => (
+                <div key={i} className="skeleton h-6 w-6 rounded-full" style={{ animationDelay: `${i * 60}ms` }} />
+              ))}
+            </div>
+          ) : (
+            <div className="max-w-sm text-center">
+              <p className="text-sm font-medium text-ink-200">Can&apos;t reach the FAULTLINE API</p>
+              <p className="mt-1.5 text-xs leading-relaxed text-ink-500 [text-wrap:pretty]">
+                The dashboard expects the API on <span className="font-mono text-ink-300">localhost:8000</span>. Start it
+                with <span className="font-mono text-ink-300">make api</span> or{" "}
+                <span className="font-mono text-ink-300">docker compose up</span>, then retry.
+              </p>
+              <button
+                onClick={onRetry}
+                className="mt-4 rounded-lg bg-ink-800 px-3.5 py-1.5 text-xs font-medium text-ink-200 transition-[background-color,transform] duration-200 hover:bg-ink-700 active:scale-[0.98]"
               >
-                {node.name}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+                Retry connection
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <svg className="relative h-full w-full" viewBox="0 0 840 680" role="img" aria-label="Service dependency graph">
+          <defs>
+            <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+              <circle cx="1" cy="1" r="0.8" fill="#191e24" />
+            </pattern>
+            <filter id="soft-glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="4" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
 
-      {/* Selected Node Inspector Flyout */}
-      {selectedNode && (
-        <div className="absolute bottom-4 left-4 p-4 bg-slate-900/90 backdrop-blur border border-slate-700/80 rounded-lg w-72 shadow-2xl z-20 text-xs">
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
-            <span className="font-semibold text-slate-100 flex items-center gap-1.5 font-mono">
-              <Activity className="w-3.5 h-3.5 text-sky-400" />
-              {selectedNode.name}
+          <rect width="100%" height="100%" fill="url(#dots)" />
+
+          {/* Edges */}
+          <g>
+            {edges.map((edge, idx) => {
+              const s = nodeMap.get(edge.source);
+              const t = nodeMap.get(edge.target);
+              if (!s || !t) return null;
+
+              const inPath = isEdgeInPath(edge.source, edge.target);
+              const isFlow = edge.type === "FLOWS_TO";
+              const isCapacityDown = isFlow && edge.capacity_rps > 0 && edge.live_rps < edge.capacity_rps;
+              const dimmed = neighbors && !(neighbors.has(edge.source) && neighbors.has(edge.target));
+
+              const stroke = inPath ? C.crit : isCapacityDown ? C.warn : isFlow ? C.flow : C.edge;
+
+              return (
+                <line
+                  key={`edge-${idx}`}
+                  x1={s.x}
+                  y1={s.y}
+                  x2={t.x}
+                  y2={t.y}
+                  stroke={stroke}
+                  strokeWidth={inPath ? 2.5 : isFlow ? 1.5 : 1}
+                  strokeDasharray={isFlow && !inPath ? "4 4" : undefined}
+                  strokeOpacity={dimmed ? 0.15 : inPath ? 1 : isFlow ? 0.9 : 0.8}
+                  strokeLinecap="round"
+                  className={isFlow && !inPath ? "flow-dash" : undefined}
+                  filter={inPath ? "url(#soft-glow)" : undefined}
+                  style={{ transition: "stroke-opacity 200ms" }}
+                />
+              );
+            })}
+          </g>
+
+          {/* Nodes */}
+          <g>
+            {positionedNodes.map((node) => {
+              const isPulsed = pulsedNodes.includes(node.name);
+              const isAlerting = node.state === "alerting";
+              const isSelected = liveSelected?.name === node.name;
+              const dimmed = neighbors && !neighbors.has(node.name);
+              const color = nodeColor(node);
+              const active = isPulsed || isSelected;
+              const flagged = node.state !== "healthy";
+
+              return (
+                <g
+                  key={node.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${node.name}, ${node.state}`}
+                  className="cursor-pointer outline-none"
+                  style={{ opacity: dimmed ? 0.3 : 1, transition: "opacity 200ms" }}
+                  onClick={() => selectNode(node)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      selectNode(node);
+                    }
+                  }}
+                  onMouseEnter={() => setHovered(node.name)}
+                  onMouseLeave={() => setHovered(null)}
+                  onFocus={() => setHovered(node.name)}
+                  onBlur={() => setHovered(null)}
+                >
+                  {isAlerting && <circle cx={node.x} cy={node.y} r="16" fill="none" stroke={C.crit} strokeWidth="1.5" className="pulse-ring" />}
+                  {isPulsed && <circle cx={node.x} cy={node.y} r="18" fill="none" stroke={C.focus} strokeWidth="1.5" className="pulse-ring" />}
+                  {active && <circle cx={node.x} cy={node.y} r="18" fill="none" stroke={C.focus} strokeWidth="1.5" strokeOpacity="0.9" />}
+
+                  {/* Larger invisible hit target */}
+                  <circle cx={node.x} cy={node.y} r="20" fill="transparent" />
+
+                  <NodeShape
+                    node={node}
+                    x={node.x}
+                    y={node.y}
+                    fill={flagged ? `${color}22` : C.nodeFill}
+                    stroke={color}
+                    strokeWidth={flagged ? 1.75 : 1.25}
+                  />
+                  {flagged && <circle cx={node.x} cy={node.y} r="3.5" fill={color} />}
+
+                  <text
+                    x={node.x}
+                    y={node.y + 26}
+                    textAnchor="middle"
+                    fontSize="9.5"
+                    fontWeight={flagged || active ? 500 : 400}
+                    fill={isAlerting ? "#f0938d" : active ? C.focus : C.label}
+                    className="pointer-events-none font-mono"
+                    style={{ letterSpacing: "-0.01em" }}
+                  >
+                    {node.name}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+        </svg>
+      )}
+
+      {/* Legend */}
+      {nodes.length > 0 && (
+        <div className="absolute right-4 top-4 z-10 flex flex-col gap-1.5 rounded-lg bg-ink-950/70 px-3 py-2.5 text-2xs text-ink-400 backdrop-blur">
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-crit" />Alerting</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-anom" />Anomalous</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-warn" />Degraded</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full border border-ink-400" />Service</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-[2px] border border-ink-400" />Store</span>
+            <span className="flex items-center gap-1.5">
+              <svg width="9" height="10" viewBox="0 0 9 10" aria-hidden><path d="M4.5 0.5 L8.5 2.75 L8.5 7.25 L4.5 9.5 L0.5 7.25 L0.5 2.75 Z" fill="none" stroke="#7b8590" /></svg>
+              Compute
             </span>
+            <span className="flex items-center gap-1.5">
+              <svg width="16" height="2" aria-hidden><line x1="0" y1="1" x2="16" y2="1" stroke={C.flow} strokeWidth="1.5" strokeDasharray="3 3" /></svg>
+              Checkout flow
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Node inspector */}
+      {liveSelected && (
+        <div className="slide-in-right absolute bottom-4 left-4 z-flyout w-72 rounded-xl border border-ink-700/60 bg-ink-850/95 p-4 text-xs shadow-[0_16px_48px_-12px_rgba(5,7,10,0.8)] backdrop-blur">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate font-mono text-[13px] font-medium text-ink-100">{liveSelected.name}</div>
+              <div className="mt-0.5 text-2xs text-ink-500">
+                {liveSelected.label} · {liveSelected.tier}
+              </div>
+            </div>
             <button
               onClick={() => setSelectedNode(null)}
-              className="text-slate-400 hover:text-slate-200 text-sm font-mono"
+              aria-label="Close inspector"
+              className="-mr-1 -mt-1 rounded-md p-1 text-ink-500 transition-colors duration-200 hover:bg-ink-800 hover:text-ink-200"
             >
-              ×
+              <X className="h-3.5 w-3.5" />
             </button>
           </div>
-          <div className="space-y-1.5 text-slate-300">
-            <div className="flex justify-between">
-              <span className="text-slate-500">Label:</span>
-              <span className="font-mono text-slate-300">{selectedNode.label}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Tier:</span>
-              <span className="font-mono text-slate-300">{selectedNode.tier}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Status:</span>
-              <span
-                className={`font-semibold capitalize ${
-                  selectedNode.state === "alerting"
-                    ? "text-rose-400"
-                    : selectedNode.state === "anomalous"
-                    ? "text-purple-400"
-                    : selectedNode.state === "degraded"
-                    ? "text-amber-400"
-                    : "text-emerald-400"
-                }`}
-              >
-                {selectedNode.state}
-              </span>
-            </div>
 
-            {selectedNode.alerts.length > 0 && (
-              <div className="mt-2 pt-2 border-t border-slate-800">
-                <span className="text-rose-400 font-semibold flex items-center gap-1 mb-1">
-                  <AlertTriangle className="w-3 h-3" /> Firing Alerts:
-                </span>
-                <div className="space-y-0.5">
-                  {selectedNode.alerts.map((a, i) => (
-                    <div key={i} className="text-rose-300 font-mono text-[11px] bg-rose-950/40 px-1.5 py-0.5 rounded">
-                      {a}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {selectedNode.anomalies.length > 0 && (
-              <div className="mt-2 pt-2 border-t border-slate-800">
-                <span className="text-purple-400 font-semibold flex items-center gap-1 mb-1">
-                  <Zap className="w-3 h-3" /> Anomalies:
-                </span>
-                <div className="space-y-0.5">
-                  {selectedNode.anomalies.map((an, i) => (
-                    <div key={i} className="text-purple-300 font-mono text-[11px] bg-purple-950/40 px-1.5 py-0.5 rounded">
-                      {an}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+          <div className="mt-3 flex items-center justify-between border-t border-ink-800 pt-3">
+            <span className="text-ink-500">State</span>
+            <span className={`font-medium capitalize ${STATE_TEXT[liveSelected.state]}`}>{liveSelected.state}</span>
           </div>
+
+          {liveSelected.alerts.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-1.5 text-ink-500">Firing alerts</div>
+              <ul className="space-y-1">
+                {liveSelected.alerts.map((a, i) => (
+                  <li key={i} className="rounded-md bg-crit-dim px-2 py-1 font-mono text-2xs text-crit">{a}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {liveSelected.anomalies.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-1.5 text-ink-500">Anomalies</div>
+              <ul className="space-y-1">
+                {liveSelected.anomalies.map((an, i) => (
+                  <li key={i} className="rounded-md bg-anom-dim px-2 py-1 font-mono text-2xs text-anom">{an}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>

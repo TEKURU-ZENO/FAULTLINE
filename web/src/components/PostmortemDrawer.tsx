@@ -1,7 +1,7 @@
 "use client";
 
-import React from "react";
-import { CheckCircle2, X, ExternalLink, Zap, Users, Gauge, ArrowRight } from "lucide-react";
+import React, { useEffect } from "react";
+import { X, ArrowRight, Crosshair } from "lucide-react";
 
 interface PostmortemDrawerProps {
   isOpen: boolean;
@@ -20,101 +20,111 @@ interface PostmortemDrawerProps {
   onSelectNode?: (name: string) => void;
 }
 
-export default function PostmortemDrawer({
-  isOpen,
-  onClose,
-  report,
-  onSelectNode,
-}: PostmortemDrawerProps) {
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-2.5">
+      <dt className="text-xs text-ink-500">{label}</dt>
+      <dd className="text-right text-[13px] text-ink-200">{children}</dd>
+    </div>
+  );
+}
+
+export default function PostmortemDrawer({ isOpen, onClose, report, onSelectNode }: PostmortemDrawerProps) {
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen || !report) return null;
 
+  const recovered = report.recovered_capacity_rps;
+  const initial = report.initial_capacity_rps;
+  const gainPct = initial > 0 ? Math.round(((recovered - initial) / initial) * 100) : null;
+
   return (
-    <div className="fixed inset-y-0 right-0 z-40 w-96 bg-[#0f172a] border-l border-slate-700/80 shadow-2xl flex flex-col select-none text-slate-100">
-      {/* Header */}
-      <div className="p-4 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          <h3 className="font-bold text-xs uppercase tracking-wider text-slate-200 font-mono">
-            Incident Postmortem
+    <aside
+      role="dialog"
+      aria-label="Incident postmortem"
+      className="slide-in-right fixed inset-y-0 right-0 z-drawer flex w-[400px] flex-col border-l border-ink-700/60 bg-ink-850 shadow-[-24px_0_64px_-16px_rgba(5,7,10,0.8)]"
+    >
+      <div className="flex items-start justify-between px-6 pb-5 pt-6">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-2xs">
+            <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+            <span className="font-medium text-ok">Resolved</span>
+            <span className="font-mono text-ink-500">{report.incident_id}</span>
+          </div>
+          <h3 className="mt-2 text-lg font-semibold leading-snug tracking-[-0.02em] text-ink-100 [text-wrap:balance]">
+            {report.title}
           </h3>
         </div>
         <button
           onClick={onClose}
-          className="text-slate-400 hover:text-slate-200 p-1 rounded-md text-sm"
+          aria-label="Close postmortem"
+          className="-mr-2 rounded-md p-1.5 text-ink-500 transition-colors duration-200 hover:bg-ink-800 hover:text-ink-200"
         >
-          <X className="w-4 h-4" />
+          <X className="h-4 w-4" />
         </button>
       </div>
 
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs font-mono">
-        <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-lg">
-          <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">
-            Incident Record
-          </div>
-          <div className="font-bold text-sky-400 text-sm">{report.incident_id}</div>
-          <div className="text-[11px] text-slate-300 font-sans mt-1 leading-snug">
-            {report.title}
-          </div>
-        </div>
-
-        {/* Root Cause with Graph Link */}
-        <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-lg">
-          <div className="text-[10px] text-slate-500 uppercase font-bold mb-1.5 flex items-center gap-1">
-            <Zap className="w-3 h-3 text-rose-400" /> Confirmed Root Cause
-          </div>
-          <div
+      <div className="flex-1 space-y-6 overflow-y-auto px-6 pb-8">
+        {/* Root cause */}
+        <section>
+          <div className="mb-2 text-xs text-ink-500">Root cause</div>
+          <button
             onClick={() => onSelectNode?.(report.root_cause)}
-            className="flex items-center justify-between p-2 rounded bg-rose-950/40 border border-rose-800/80 text-rose-200 font-bold cursor-pointer hover:bg-rose-900/40 transition-colors"
+            className="group flex w-full items-center justify-between rounded-xl bg-crit-dim px-4 py-3 text-left transition-colors duration-200 hover:bg-crit/20"
           >
-            <span>{report.root_cause}</span>
-            <ExternalLink className="w-3.5 h-3.5 text-rose-400" />
-          </div>
-          <span className="text-[10px] text-slate-500 block mt-1">
-            Click to focus node on topology graph
-          </span>
-        </div>
-
-        {/* Paged Engineer */}
-        <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-lg">
-          <div className="text-[10px] text-slate-500 uppercase font-bold mb-1.5 flex items-center gap-1">
-            <Users className="w-3 h-3 text-sky-400" /> Engineer Paged (On-Call + History)
-          </div>
-          <div className="font-semibold text-slate-200 text-sm">
-            {report.paged_engineer}
-          </div>
-        </div>
-
-        {/* Throughput Recovery */}
-        <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-lg">
-          <div className="text-[10px] text-slate-500 uppercase font-bold mb-2 flex items-center gap-1">
-            <Gauge className="w-3 h-3 text-emerald-400" /> Capacity Restoration
-          </div>
-          <div className="flex items-center justify-between text-xs bg-slate-900 p-2 rounded border border-slate-800">
-            <span className="text-rose-400 font-bold">{report.initial_capacity_rps.toFixed(0)} rps</span>
-            <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
-            <span className="text-emerald-400 font-bold">{report.recovered_capacity_rps.toFixed(0)} rps</span>
-          </div>
-        </div>
-
-        {/* Investigation Metrics */}
-        <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-lg space-y-2">
-          <div className="flex justify-between">
-            <span className="text-slate-500">Fast Path Used:</span>
-            <span className={`font-bold ${report.is_fast_path ? "text-purple-400" : "text-slate-400"}`}>
-              {report.is_fast_path ? "YES (-40% steps)" : "NO (Full Exploration)"}
+            <span className="font-mono text-[15px] font-medium text-crit">{report.root_cause}</span>
+            <span className="flex items-center gap-1 text-2xs text-crit/80">
+              <Crosshair className="h-3.5 w-3.5" />
+              Show on graph
             </span>
+          </button>
+        </section>
+
+        {/* Capacity */}
+        <section>
+          <div className="mb-2 text-xs text-ink-500">Checkout capacity</div>
+          <div className="flex items-end gap-4 rounded-xl bg-ink-900 px-4 py-4">
+            <div>
+              <div className="font-mono text-2xl font-medium leading-none tracking-tight text-crit tabular">{initial.toFixed(0)}</div>
+              <div className="mt-1 text-2xs text-ink-500">during incident</div>
+            </div>
+            <ArrowRight className="mb-5 h-4 w-4 text-ink-600" />
+            <div>
+              <div className="font-mono text-2xl font-medium leading-none tracking-tight text-ok tabular">{recovered.toFixed(0)}</div>
+              <div className="mt-1 text-2xs text-ink-500">after remediation</div>
+            </div>
+            {gainPct !== null && (
+              <div className="ml-auto mb-5 font-mono text-xs text-ink-400 tabular">+{gainPct}%</div>
+            )}
           </div>
-          <div className="flex justify-between">
-            <span className="text-slate-500">Total Tool Steps:</span>
-            <span className="font-bold text-slate-200">{report.total_steps}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-500">Remediation Action:</span>
-            <span className="font-bold text-emerald-400 uppercase">{report.action_taken}</span>
-          </div>
-        </div>
+          <div className="mt-1.5 text-right text-2xs text-ink-500">rps, computed with algo.maxFlow</div>
+        </section>
+
+        {/* Details */}
+        <section>
+          <dl className="divide-y divide-ink-800 border-y border-ink-800">
+            <Row label="Engineer paged">{report.paged_engineer}</Row>
+            <Row label="Action taken">
+              <span className="font-mono text-ok">{report.action_taken}</span>
+            </Row>
+            <Row label="Tool steps">
+              <span className="font-mono tabular">{report.total_steps}</span>
+            </Row>
+            <Row label="Investigation path">
+              {report.is_fast_path ? (
+                <span className="text-focus">Fast path from memory</span>
+              ) : (
+                <span className="text-ink-400">Full exploration</span>
+              )}
+            </Row>
+          </dl>
+        </section>
       </div>
-    </div>
+    </aside>
   );
 }
