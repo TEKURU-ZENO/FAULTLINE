@@ -315,3 +315,7 @@ Open **`http://localhost:3001`** in your browser. (Explore graph in parallel at 
 ## License
 
 MIT License. Built for the **FalkorDB Hackathon 2026**.
+
+## Walkthrough / Demo Video
+
+https://youtu.be/Stj6zyU2yhs
